@@ -34,7 +34,8 @@ from tqdm import tqdm
 from seismic.units_utils import KM_PER_DEG
 
 
-def plot_ccp(matrx, length, max_depth, spacing, vlims=None, metadata=None, title=None, colormap='seismic'):
+def plot_ccp(matrx, length, max_depth, spacing, vlims=None, metadata=None, title=None,
+             colormap='seismic', colorlegend=True):
     """Plot results of CCP stacking procedure.
 
     :param matrx: [description]
@@ -53,13 +54,15 @@ def plot_ccp(matrx, length, max_depth, spacing, vlims=None, metadata=None, title
     :type title: str, optional
     :param colormap: Color map to use for the CCP intensity shading.
     :type colormap: str
+    :param colorlegend: Whether to add color legend to plot.
+    :type colorlegend: boolean
     :return: Figure handle
     :rtype: matplotlib.pyplot.Figure
     """
     tickstep_x = 50
     tickstep_y = 25
 
-    fig = plt.figure(figsize=(16, 9))
+    fig = plt.figure(figsize=(16, 4))
     interpolation = 'hanning'
     extent = (0, length, 0, max_depth)
     assert not np.any(np.isnan(matrx))
@@ -69,16 +72,20 @@ def plot_ccp(matrx, length, max_depth, spacing, vlims=None, metadata=None, title
     else:
         im = plt.imshow(matrx, cmap=colormap, aspect='auto', extent=extent, interpolation=interpolation, origin='lower')
     # end if
-    cb = plt.colorbar(im)
-    cb.set_label('Stacked amplitude (arb. units)')
+
+    if colorlegend:
+        cb = plt.colorbar(im)
+        cb.set_label('Stacked amplitude (arb. units)')
+    # end if
 
     if title is not None:
         plt.title(title, fontsize=16, y=1.02)
+    # end if
 
     plt.xlim(0, length)
     plt.ylim(max_depth*1.0001, 0)
 
-    plt.xlabel('Distance (km)', fontsize=12)
+    plt.xlabel('Distance (km)', fontsize=12, labelpad=1.0)
     plt.ylabel('Depth (km)', fontsize=12)
 
     plt.xticks(np.arange(0.0, length*1.0001, tickstep_x), fontsize=12)
@@ -106,8 +113,8 @@ def plot_ccp(matrx, length, max_depth, spacing, vlims=None, metadata=None, title
         for stn, meta in stn_labels:
             x = meta['sta_offset']
             y = 1.0 + (i%2)*2.5
-            plt.text(x, y, "{} ({})".format(stn, meta['event_count']), horizontalalignment='center',
-                     verticalalignment='top', fontsize=9, backgroundcolor='#ffffffa0')
+            plt.text(x, y, stn, horizontalalignment='center', verticalalignment='top', fontsize=9,
+                     backgroundcolor='#ffffffa0')
             i += 1
         # end for
     # end if
@@ -565,7 +572,8 @@ def ccp_generate(rf_stream, startpoint, endpoint, width, spacing, max_depth, cha
 
 
 def run(rf_stream, start_latlon, end_latlon, width, spacing, max_depth, channels,
-        background_model='ak135', stacked_scale=None, title=None, colormap=None):
+        background_model='ak135', stacked_scale=None, title=None, colormap=None,
+        colorlegend=True):
     """Run CCP generation on a given dataset of RFs.
 
     :param rf_stream: Set of RFs to use for CCP plot
@@ -590,6 +598,8 @@ def run(rf_stream, start_latlon, end_latlon, width, spacing, max_depth, channels
     :type title: str
     :param colormap: Color map to use for the CCP intensity shading. Suggest 'seismic', 'coolwarm' or 'jet'.
     :type colormap: str
+    :param colorlegend: Whether to add color legend to plot.
+    :type colorlegend: boolean
     :return: Figure handles: Main figure, map figure, dict of station parameters
     :rtype: (matplotlib.pyplot.Figure, matplotlib.pyplot.Figure, dict)
     """
@@ -610,7 +620,7 @@ def run(rf_stream, start_latlon, end_latlon, width, spacing, max_depth, channels
             vlims = None
         # endif
         fig = plot_ccp(matrix_norm, length, max_depth, spacing, vlims=vlims, metadata=stn_params,
-                      title=title, colormap=colormap)
+                      title=title, colormap=colormap, colorlegend=colorlegend)
     # end if
 
     return fig, fig_map, stn_params
