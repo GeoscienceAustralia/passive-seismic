@@ -9,7 +9,10 @@ import rf
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import pandas as pd
-# from scipy import interpolate
+from scipy import interpolate
+from scipy.signal.windows import tukey
+from scipy.signal import firwin, tf2sos, sosfiltfilt
+from obspy.geodetics.base import gps2dist_azimuth
 
 import seismic.receiver_fn.rf_util as rf_util
 from seismic.ASDFdatabase import FederatedASDFDataSet
@@ -211,6 +214,31 @@ def gravity_subplot(hf, metadata, grav_map):
         return
     # end if
 
+    def tukey_lowpass_filter(x, filter_len_km):
+        filter_len = int(np.ceil(filter_len_km * RESAMPLES_PER_KM))
+        if (filter_len % 2) == 0:
+            filter_len += 1
+        # end if
+        kern = firwin(filter_len, 1.0 / filter_len_km, window=('tukey', 0.3), fs=RESAMPLES_PER_KM)
+        sos_kern = tf2sos(kern, 1)
+        sig_filt = sosfiltfilt(sos_kern, x)
+        return sig_filt
+    # end func
+
+    def tukey_rolling_mean(x, filter_len_km):
+        filter_len = int(np.ceil(filter_len_km * RESAMPLES_PER_KM))
+        if (filter_len % 2) == 0:
+            filter_len += 1
+        # end if
+        kern = tukey(filter_len, 0.3)
+        kern = kern/np.sum(kern)
+        sos_kern = tf2sos(kern, 1)
+        sig_filt = sosfiltfilt(sos_kern, x)
+        return sig_filt
+    # end func
+
+    RESAMPLES_PER_KM = 2.0
+
     # Move the bottom of the main axes bounding box up to make space to gravity plot beneath
     pos = hf.axes[0].get_position()
     pos.y0 += 0.2
@@ -220,7 +248,8 @@ def gravity_subplot(hf, metadata, grav_map):
     pos_cb.y0 += 0.2
     hf.axes[1].set_position(pos_cb)
 
-    # Add gravity plot
+    # Add gravity plot. Ignores curvature of earth in transect projection to distance
+    # from starting point, just uses Euclidean geometry.
     start = metadata['transect_start']
     end = metadata['transect_end']
     dirn = metadata['transect_dirn']
@@ -232,11 +261,22 @@ def gravity_subplot(hf, metadata, grav_map):
     ax_grav.set_position(pos_grav)
     plt.sca(ax_grav)
     plt.title("Gravity survey", fontsize=8, y=0.80)
-    grav_pos = np.linspace(start, end, 1000)
+    transect_len_km = gps2dist_azimuth(start[1], start[0], end[1], end[0])[0]/1000.0
+    num_samples = int(np.ceil(transect_len_km*RESAMPLES_PER_KM))
+    grav_pos = np.linspace(start, end, num_samples)
     grav_vals = grav_map(grav_pos)
     grav_dist = np.dot((grav_pos - start), dirn)*KM_PER_DEG
-    plt.plot(grav_dist, grav_vals)
+    grav_vals_lp_filt = tukey_lowpass_filter(grav_vals, 15.0)
+    # grav_vals_tk_filt = tukey_rolling_mean(grav_vals, 15.0)
+    grav_vals_lp_filt_long = tukey_lowpass_filter(grav_vals, 70.0)
+    # grav_vals_tk_filt_long = tukey_rolling_mean(grav_vals, 70.0)
+    plt.plot(grav_dist, grav_vals, label='Original Bouger')
+    plt.plot(grav_dist, grav_vals_lp_filt, '--', alpha=0.6, label='Designed Tukey filter (15 km)')
+    # plt.plot(grav_dist, grav_vals_tk_filt, '-.', alpha=0.6, label='Tukey rolling window (15 km)')
+    plt.plot(grav_dist, grav_vals_lp_filt_long, '--', alpha=0.6, label='Designed Tukey filter (70 km)')
+    # plt.plot(grav_dist, grav_vals_tk_filt_long, '-.', alpha=0.6, label='Tukey rolling window (70 km)')
     plt.grid("#80808080", linestyle=':')
+    plt.legend(loc=3, fontsize=8)
     tickstep_x = 50.0
     xlim = hf.axes[0].get_xlim()
     plt.xticks(np.arange(0.0, xlim[1], tickstep_x), fontsize=12)
@@ -282,12 +322,16 @@ def main(transect_file, output_folder, rf_file, waveform_database, stack_scale, 
     assert len(channel)  == 1, "Batch stack only on one channel at a time"
 
     # Custom plot modifiers. Leave commented for now until refactoring in ticket PST-479
-    # print("Loading gravity data...")
-    # grav = np.load('post_analysis/GravityGrid.xyz.npy')
-    # print("Creating interpolator...")
-    # grav_map = interpolate.NearestNDInterpolator(grav[:, 0:2], grav[:, 2])
+    print("Loading gravity data...")
+    grav = np.load('post_analysis/GravityGrid.xyz.npy')
+    # Cut gravity map to region of interest
+    OA_region_mask = (grav[:, 1] >= -23) & (grav[:, 1] <= -17) & (grav[:, 0] >= 132) & (grav[:, 0] <= 142)
+    grav = grav[OA_region_mask, :]
+    print("Creating interpolator...")
+    grav_map = interpolate.CloughTocher2DInterpolator(grav[:, 0:2], grav[:, 2])
     # annotators = [moho_annotator, lambda hf, md: gravity_subplot(hf, md, grav_map)]
-    annotators = None
+    annotators = [lambda hf, md: gravity_subplot(hf, md, grav_map)]
+    # annotators = None
     print("Producing plot...")
     run_batch(transect_file, rf_file, waveform_database, stack_scale=stack_scale, width=width, spacing=spacing,
               max_depth=depth, channel=channel, output_folder=output_folder, colormap=colormap,
